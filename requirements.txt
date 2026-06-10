@@ -1,0 +1,8 @@
+alpaca-py>=0.30.0
+pandas>=2.0.0
+numpy>=1.26.0
+APScheduler>=3.10.0
+python-telegram-bot==21.3
+python-dotenv==1.0.1
+colorlog==6.8.2
+aiohttp==3.9.5
