@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "proxavier"
+version = "0.1.0"
+description = "Xavier — world-class quant day-trading bot"
+requires-python = ">=3.11"
+dependencies = [
+    "alpaca-py>=0.30.0",
+    "pandas>=2.0.0",
+    "numpy>=1.26.0",
+    "APScheduler>=3.10.0",
+    "python-telegram-bot==21.3",
+    "python-dotenv==1.0.1",
+    "colorlog==6.8.2",
+    "aiohttp==3.9.5",
+]
+
+[project.scripts]
+xavier = "xavier_main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["xavier*"]

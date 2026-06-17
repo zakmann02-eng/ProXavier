@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.Env
+
+# Runtime state
+xavier_positions.json
+xavier.log
+
+# IDE
+.vscode/
+.idea/
