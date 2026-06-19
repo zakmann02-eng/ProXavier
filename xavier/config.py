@@ -35,27 +35,26 @@ class XavierConfig:
     telegram_chat_id: str
 
     # Risk
-    risk_pct:                float
-    max_trade_risk_usd:      float   # hard cap per trade in dollars
-    hard_loss_halt_usd:      float   # halt all trading if cumulative loss hits this
-    max_portfolio_risk_pct:  float
-    daily_loss_limit_pct:    float
-    consecutive_loss_halt:   int
-    max_crypto_alloc_pct:    float
-    max_positions:           int
-    max_day_positions:       int
-    max_swing_positions:     int
+    risk_pct:               float
+    hard_loss_halt_usd:     float
+    max_portfolio_risk_pct: float
+    daily_loss_limit_pct:   float
+    consecutive_loss_halt:  int
+    max_crypto_alloc_pct:   float
+    max_positions:          int
+    max_day_positions:      int
+    max_swing_positions:    int
 
     # Strategy toggles
-    orb_minutes:            int
-    min_rr_ratio:           float
-    min_price:              float
-    allow_short:            bool
-    enable_crypto:          bool
-    enable_swing:           bool
-    enable_vwap_reversion:  bool
-    enable_momentum:        bool
-    enable_etf_rotation:    bool
+    orb_minutes:           int
+    min_rr_ratio:          float
+    min_price:             float
+    allow_short:           bool
+    enable_crypto:         bool
+    enable_swing:          bool
+    enable_vwap_reversion: bool
+    enable_momentum:       bool
+    enable_etf_rotation:   bool
 
     # Runtime
     paused: bool
@@ -82,11 +81,10 @@ class XavierConfig:
             alpaca_paper=_bool("ALPACA_PAPER", True),
             telegram_token=tg_token,
             telegram_chat_id=tg_chat,
-            risk_pct=_float("XAVIER_RISK_PCT", 1.0),
-            max_trade_risk_usd=_float("XAVIER_MAX_TRADE_RISK_USD", 5.0),
+            risk_pct=_float("XAVIER_RISK_PCT", 10.0),
             hard_loss_halt_usd=_float("XAVIER_HARD_LOSS_HALT_USD", 100.0),
-            max_portfolio_risk_pct=_float("XAVIER_MAX_PORTFOLIO_RISK_PCT", 6.0),
-            daily_loss_limit_pct=_float("XAVIER_DAILY_LOSS_LIMIT_PCT", 3.0),
+            max_portfolio_risk_pct=_float("XAVIER_MAX_PORTFOLIO_RISK_PCT", 90.0),
+            daily_loss_limit_pct=_float("XAVIER_DAILY_LOSS_LIMIT_PCT", 20.0),
             consecutive_loss_halt=_int("XAVIER_CONSECUTIVE_LOSS_HALT", 4),
             max_crypto_alloc_pct=_float("XAVIER_MAX_CRYPTO_ALLOC_PCT", 80.0),
             max_positions=_int("XAVIER_MAX_POSITIONS", 3),
