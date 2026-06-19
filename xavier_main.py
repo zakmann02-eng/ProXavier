@@ -1,29 +1,28 @@
-#!/usr/bin/env python3
-"""Entry point for Xavier stock day trading bot."""
+"""ProXavier — entry point."""
+from __future__ import annotations
+
 import asyncio
 import logging
 import sys
+from pathlib import Path
 
 from xavier.config import XavierConfig
 from xavier.bot import XavierBot
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("xavier.log"),
-    ],
-)
+
+def _setup_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
 
 
 def main() -> None:
-    try:
-        cfg = XavierConfig.load()
-    except ValueError as exc:
-        print(f"Configuration error: {exc}")
-        sys.exit(1)
-
+    _setup_logging()
+    cfg = XavierConfig.from_env()
     bot = XavierBot(cfg)
     asyncio.run(bot.run())
 
