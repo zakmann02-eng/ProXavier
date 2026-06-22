@@ -66,7 +66,7 @@ class AlpacaClient:
             symbol_or_symbols=symbol,
             timeframe=timeframe,
             start=start,
-            feed=DataFeed.IEX,
+            feed=DataFeed.SIP,
             limit=limit,
         )
         bars = self._stock_data.get_stock_bars(request)
@@ -78,7 +78,7 @@ class AlpacaClient:
         return self.get_bars(symbol, TimeFrame.Minute, start=market_open.astimezone(UTC), limit=390)
 
     def get_latest_price(self, symbol: str) -> float:
-        req   = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
+        req   = StockLatestQuoteRequest(symbol_or_symbols=symbol, feed=DataFeed.SIP)
         quote = self._stock_data.get_stock_latest_quote(req)[symbol]
         ask   = float(quote.ask_price or 0)
         bid   = float(quote.bid_price or 0)
