@@ -40,10 +40,10 @@ from .strategies import (
 logger = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 
-_TRADE_START  = dt_time(9, 46)
-_TRADE_END    = dt_time(15, 30)
-_EOD_CLOSE_H  = 15
-_EOD_CLOSE_M  = 45
+_TRADE_START = dt_time(9, 46)
+_TRADE_END   = dt_time(15, 30)
+_EOD_CLOSE_H = 15
+_EOD_CLOSE_M = 45
 
 
 class XavierBot:
@@ -88,9 +88,12 @@ class XavierBot:
             max_open_positions=cfg.max_positions,
         )
 
-        self._app: Application | None        = None
+        self._app: Application | None         = None
         self._pos_mgr: PositionManager | None = None
         self._orb_date: object = None
+
+        self._cumulative_pnl: float = 0.0
+        self._hard_halted: bool     = False
 
     async def _notify(self, text: str) -> None:
         if self._app is None:
@@ -104,6 +107,18 @@ class XavierBot:
             )
         except Exception as exc:
             logger.warning("Telegram send failed: %s", exc)
+
+    def _update_cumulative_pnl(self, pnl: float) -> None:
+        self._cumulative_pnl += pnl
+        if self._cumulative_pnl <= -self.cfg.hard_loss_halt_usd and not self._hard_halted:
+            self._hard_halted = True
+            asyncio.create_task(self._notify(
+                f"🚨 *XAVIER HARD HALT*\n"
+                f"Cumulative loss has reached ${self._cumulative_pnl:.2f}\n"
+                f"All trading is STOPPED.\n"
+                f"Send /approve to re-enable trading after review."
+            ))
+            logger.warning("Hard loss halt triggered: cumulative P&L = %.2f", self._cumulative_pnl)
 
     async def _job_orb_and_rank(self) -> None:
         today = datetime.now(ET).date()
@@ -138,11 +153,12 @@ class XavierBot:
         logger.info("ORB captured %d/%d | ETF rankings updated", captured, n_eq)
         await self._notify(
             f"📐 *Xavier armed* — ORB {captured}/{n_eq} | "
-            f"ETF ranked | trading window open"
+            f"ETF ranked | trading window open\n"
+            f"Cumulative P&L: ${self._cumulative_pnl:+.2f}"
         )
 
     async def _job_day_scan(self) -> None:
-        if self.paused or self._risk_mgr.is_halted:
+        if self.paused or self._hard_halted or self._risk_mgr.is_halted:
             return
 
         now_et = datetime.now(ET).time()
@@ -176,11 +192,9 @@ class XavierBot:
             try:
                 df = self._data.today_1m(sym)
                 asset_cls = "etf" if sym in self._scanner.etf_symbols else "equity"
-
                 sig = self._orb.evaluate(sym, df, equity, self.cfg.risk_pct, asset_cls)
                 if sig:
                     self._bus.submit(sig)
-
                 if self.cfg.enable_vwap_reversion:
                     sig2 = self._vwap_rev.evaluate(sym, df, equity, self.cfg.risk_pct, asset_cls)
                     if sig2:
@@ -204,7 +218,7 @@ class XavierBot:
         await self._execute_signals(equity, pos_mgr)
 
     async def _job_swing_scan(self) -> None:
-        if self.paused or not self.cfg.enable_swing:
+        if self.paused or self._hard_halted or not self.cfg.enable_swing:
             return
 
         now_et = datetime.now(ET)
@@ -265,9 +279,10 @@ class XavierBot:
         placed = 0
 
         for sig in signals:
+            if self._hard_halted:
+                break
             if pos_mgr.has_position(sig.symbol):
                 continue
-
             if sig.trade_type == "day"   and pos_mgr.day_count   >= self.cfg.max_day_positions:
                 continue
             if sig.trade_type == "swing" and pos_mgr.swing_count >= self.cfg.max_swing_positions:
@@ -311,10 +326,11 @@ class XavierBot:
         await self._notify(
             f"{'📈' if sig.direction == 'LONG' else '📉'} "
             f"*{sig.symbol}* [{sig.strategy_id}] {sig.trade_type.upper()}\n"
-            f"Mode: {mode}  |  {sig.direction} x{sig.qty:.4f} @ ${sig.entry_price:.4f}\n"
+            f"Mode: {mode}  |  {sig.direction} x{sig.qty:.6f} @ ${sig.entry_price:.4f}\n"
             f"TP1: ${sig.tp1_price:.4f}  |  SL: ${sig.sl_price:.4f}\n"
-            f"R:R {sig.rr_ratio:.1f}:1  |  Risk ${sig.risk_usd:.2f}  |  Score {sig.score}/100\n"
-            f"Signals: {', '.join(sig.triggers)}"
+            f"Risk: ${sig.risk_usd:.2f}  |  R:R {sig.rr_ratio:.1f}:1  |  Score {sig.score}/100\n"
+            f"Signals: {', '.join(sig.triggers)}\n"
+            f"Cumulative P&L: ${self._cumulative_pnl:+.2f}"
         )
 
     async def _job_check_positions(self) -> None:
@@ -336,6 +352,13 @@ class XavierBot:
             return
         if self._pos_mgr:
             await self._pos_mgr.send_daily_report()
+        sign = "+" if self._cumulative_pnl >= 0 else ""
+        await self._notify(
+            f"💰 *30-Day Challenge Update*\n"
+            f"Cumulative P&L: ${sign}{self._cumulative_pnl:.2f}\n"
+            f"Hard halt at: -${self.cfg.hard_loss_halt_usd:.2f}\n"
+            f"Hard halted: {self._hard_halted}"
+        )
 
     async def _cmd_status(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         try:
@@ -347,9 +370,10 @@ class XavierBot:
             await update.message.reply_text(f"Error fetching account: {exc}")
             return
 
-        pm   = self._pos_mgr
-        mode = "PAPER" if self.cfg.alpaca_paper else "LIVE"
-        sign = "+" if (pm.daily_pnl if pm else 0) >= 0 else ""
+        pm     = self._pos_mgr
+        mode   = "PAPER" if self.cfg.alpaca_paper else "LIVE"
+        sign   = "+" if (pm.daily_pnl if pm else 0) >= 0 else ""
+        csign  = "+" if self._cumulative_pnl >= 0 else ""
         halted = self._risk_mgr.is_halted
 
         await update.message.reply_text(
@@ -358,8 +382,9 @@ class XavierBot:
             f"Equity: ${equity:,.2f}  |  BP: ${bp:,.2f}\n"
             f"Positions: {pm.open_count if pm else 0}/{self.cfg.max_positions} "
             f"(day {pm.day_count if pm else 0} / swing {pm.swing_count if pm else 0})\n"
-            f"Daily P&L: ${sign}{pm.daily_pnl:.2f}\n"
-            f"Paused: {self.paused}  |  Halted: {halted}",
+            f"Today P&L: ${sign}{pm.daily_pnl:.2f}\n"
+            f"Cumulative P&L: ${csign}{self._cumulative_pnl:.2f}\n"
+            f"Paused: {self.paused}  |  Halted: {halted}  |  Hard halt: {self._hard_halted}",
             parse_mode="Markdown",
         )
 
@@ -367,8 +392,22 @@ class XavierBot:
         text = self._pos_mgr.summary_text() if self._pos_mgr else "Bot not ready."
         await update.message.reply_text(text, parse_mode="Markdown")
 
+    async def _cmd_pnl(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        pm    = self._pos_mgr
+        sign  = "+" if self._cumulative_pnl >= 0 else ""
+        dsign = "+" if (pm.daily_pnl if pm else 0) >= 0 else ""
+        await update.message.reply_text(
+            f"💰 *P&L Summary*\n"
+            f"Today: ${dsign}{pm.daily_pnl:.2f}\n"
+            f"Cumulative: ${sign}{self._cumulative_pnl:.2f}\n"
+            f"Trades today: {pm.daily_trades if pm else 0}  |  Wins: {pm.daily_wins if pm else 0}\n"
+            f"Hard halt at: -${self.cfg.hard_loss_halt_usd:.2f}\n"
+            f"Target: +$900.00 (to reach $1,000)",
+            parse_mode="Markdown",
+        )
+
     async def _cmd_risk(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-        rm  = self._risk_mgr
+        rm = self._risk_mgr
         try:
             equity = self._client.get_equity()
         except Exception:
@@ -380,6 +419,9 @@ class XavierBot:
             f"Crypto notional: ${rm._crypto_notional:.2f}\n"
             f"Consecutive losses: {rm._consecutive_losses}\n"
             f"Daily P&L: ${rm.daily_pnl:.2f}\n"
+            f"Cumulative P&L: ${self._cumulative_pnl:+.2f}\n"
+            f"Hard halt threshold: -${self.cfg.hard_loss_halt_usd:.2f}\n"
+            f"Hard halted: {self._hard_halted}\n"
             f"Halted: {rm.is_halted}",
             parse_mode="Markdown",
         )
@@ -393,7 +435,7 @@ class XavierBot:
             f"{'✅' if cfg.enable_momentum else '⏸'} Momentum Breakout (swing)\n"
             f"{'✅' if cfg.enable_etf_rotation else '⏸'} ETF Sector Rotation (swing)\n"
             f"{'✅' if cfg.enable_crypto else '⏸'} Crypto Trend\n\n"
-            f"Risk/trade: {cfg.risk_pct}%  |  Min R:R {cfg.min_rr_ratio}:1\n"
+            f"Risk/trade: {cfg.risk_pct}%  |  Min R:R {cfg.min_rr_ratio:.1f}:1\n"
             f"Max positions: {cfg.max_positions} "
             f"(day {cfg.max_day_positions} / swing {cfg.max_swing_positions})",
             parse_mode="Markdown",
@@ -406,6 +448,20 @@ class XavierBot:
     async def _cmd_resume(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         self.paused = False
         await update.message.reply_text("▶️ Xavier resumed.")
+
+    async def _cmd_approve(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._hard_halted:
+            await update.message.reply_text("ℹ️ Xavier is not hard-halted — no action needed.")
+            return
+        self._hard_halted = False
+        self.paused       = False
+        await update.message.reply_text(
+            "✅ *Hard halt lifted — Xavier is trading again.*\n"
+            f"Cumulative P&L: ${self._cumulative_pnl:+.2f}\n"
+            "Trade carefully.",
+            parse_mode="Markdown",
+        )
+        logger.info("Hard halt lifted by Telegram /approve")
 
     async def _cmd_closeall(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         if self._pos_mgr:
@@ -434,10 +490,12 @@ class XavierBot:
             "*Xavier Commands*\n"
             "/status — account, equity, P&L\n"
             "/positions — open positions with TP/SL\n"
+            "/pnl — cumulative P&L vs $1,000 target\n"
             "/risk — portfolio risk exposure\n"
             "/strategies — active strategy settings\n"
             "/pause — stop new trades\n"
             "/resume — re-enable trading\n"
+            "/approve — lift hard loss halt\n"
             "/closeall — close every open position\n"
             "/closeday — close day positions only\n"
             "/watchlist — current watchlist\n"
@@ -454,13 +512,21 @@ class XavierBot:
             self._risk_mgr,
         )
 
+        original_accrue = self._pos_mgr._accrue_pnl
+        def _accrue_and_track(pnl: float) -> None:
+            original_accrue(pnl)
+            self._update_cumulative_pnl(pnl)
+        self._pos_mgr._accrue_pnl = _accrue_and_track
+
         for cmd, handler in [
             ("status",     self._cmd_status),
             ("positions",  self._cmd_positions),
+            ("pnl",        self._cmd_pnl),
             ("risk",       self._cmd_risk),
             ("strategies", self._cmd_strategies),
             ("pause",      self._cmd_pause),
             ("resume",     self._cmd_resume),
+            ("approve",    self._cmd_approve),
             ("closeall",   self._cmd_closeall),
             ("closeday",   self._cmd_closeday),
             ("watchlist",  self._cmd_watchlist),
@@ -469,7 +535,6 @@ class XavierBot:
             self._app.add_handler(CommandHandler(cmd, handler))
 
         scheduler = AsyncIOScheduler(timezone="America/New_York")
-
         scheduler.add_job(self._job_orb_and_rank,    "cron",     hour=9,  minute=46, day_of_week="mon-fri")
         scheduler.add_job(self._job_day_scan,        "interval", minutes=2)
         scheduler.add_job(self._job_swing_scan,      "cron",     hour=10, minute=0,  day_of_week="mon-fri")
@@ -477,7 +542,6 @@ class XavierBot:
         scheduler.add_job(self._job_check_positions, "interval", seconds=30)
         scheduler.add_job(self._job_eod_close,       "cron",     hour=_EOD_CLOSE_H, minute=_EOD_CLOSE_M, day_of_week="mon-fri")
         scheduler.add_job(self._job_daily_report,    "cron",     hour=16, minute=0,  day_of_week="mon-fri")
-
         scheduler.start()
 
         async with self._app:
@@ -497,11 +561,11 @@ class XavierBot:
                 + (" + Crypto"   if self.cfg.enable_crypto         else "")
             )
             await self._notify(
-                f"🚀 *Xavier — Online*\n"
+                f"🚀 *Xavier — 30-Day Challenge*\n"
                 f"Mode: {mode}  |  {strategies}\n"
                 f"Watchlist: {n_eq} equities · {n_etf} ETFs · {n_cry} crypto\n"
-                f"Risk/trade: {self.cfg.risk_pct}%  |  Max positions: {self.cfg.max_positions}\n"
-                f"TP scale: TP1 (50%)→breakeven→trailing  TP2 (full exit)\n"
+                f"Hard halt: -${self.cfg.hard_loss_halt_usd:.2f}\n"
+                f"Target: $1,000 in 30 days\n"
                 f"Commands: /help"
             )
 
