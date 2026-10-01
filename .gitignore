@@ -1,0 +1,7 @@
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+# cached market data, journal DB, backtest output — never committed
+data/*
+!data/skip_days.yaml

@@ -1,0 +1,95 @@
+# All tunable strategy parameters. Every threshold here is a hypothesis to be
+# validated in the Phase 0 backtest — do not treat the defaults as proven.
+
+symbol: SPY
+
+session:
+  timezone: America/New_York
+  wake_time: "07:55"          # cron fires ~07:55 ET; script exits if outside wake window
+  wake_window_minutes: 45     # run only if started within [wake_time, wake_time + this)
+  brief_time: "09:25"
+  entry_start: "09:30"        # first candle opens here
+  entry_end: "09:50"          # last candle that can trigger an entry CLOSES at this time
+  time_stop: "12:00"
+  candle_minutes: 5           # test 2, 3 and 5 in backtests
+  data_lag_seconds: 8         # wait this long after a candle closes before fetching it
+  skip_half_days: false
+  skip_day_types: [FOMC, CPI, NFP]   # remove CPI/NFP if backtests show they're fine
+
+zones:
+  width_pct: 0.15             # zone band width as % of price (0.10–0.25)
+  swing_sessions: 10          # sessions of history for swing zones
+  swing_timeframe_minutes: 30
+  pivot_strength: 2           # bars each side to qualify as a swing high/low
+  min_touches: 2              # swing zones need at least this many reversals
+  key_level_strength: 1       # base strength for PDH/PDL/PDC/ONH/ONL
+  max_distance_pct: 3.0       # ignore zones farther than this from the last price
+
+trend:
+  timeframe_minutes: 60
+  sessions: 5
+  pivot_strength: 2
+  neutral_policy: strongest_only   # strongest_only | skip
+  neutral_min_strength: 3
+
+setups:
+  enabled: [kangaroo_tail, big_shadow, wammie_moolah, big_belt, last_kiss]
+  context_bars: 8             # bars used for "larger than recent candles"
+  zone_tolerance_pct: 0.05    # how close (in % of price) a bar must get to count as touching a zone
+  stop_buffer_pct: 0.02       # structural stop sits this far beyond the tail
+  kangaroo_tail:
+    min_tail_ratio: 0.66      # tail >= this fraction of the candle range
+    body_zone_fraction: 0.34  # open & close must be in this end fraction of the range
+    min_range_mult: 1.0       # range >= this × average range of context bars
+  big_shadow:
+    lookback: 5               # range must exceed every one of the prior N candles
+    close_extreme_fraction: 0.25   # close within this fraction of the range from its extreme
+  wammie_moolah:
+    lookback: 12
+    min_bars_between: 3
+    max_new_extreme_pct: 0.03 # second touch may undercut the first by at most this % of price
+    min_bounce_pct: 0.08      # price must move away by at least this % between touches
+  big_belt:
+    max_bar_index: 0          # only the first N+1 candles of the session (0 = opening candle)
+    min_gap_pct: 0.10
+    open_extreme_fraction: 0.10
+    close_extreme_fraction: 0.25
+    min_range_mult: 1.0
+  last_kiss:
+    lookback: 12
+
+checklist:
+  zone_proximity_pct: 0.10    # "closed at or within a zone": close within this % of the zone edge
+  min_reward_risk: 2.0
+  no_target_policy: skip      # skip | measured (use min_reward_risk × risk as the target)
+  max_trades_per_day: 1
+
+trade:
+  allow_spreads: true         # false → single long call/put
+  spread_width: 2.0
+  dte: 0                      # 0 = same day, 1 = next trading day
+  max_contracts: 1
+  fee_per_contract_leg: 0.05  # regulatory/exchange fees per contract per leg, $ (each side)
+  limit_buffer_fraction: 0.25 # max limit = mid + this × bid/ask width
+  max_bid_ask_ratio: 0.35     # liquidity filter: (natural width / mid) must be <= this
+  min_debit: 0.10
+
+exits:
+  take_profit_pct: 60         # +50% to +70%
+  take_profit_at_zone: true   # also exit if SPY reaches the next opposing zone
+  hard_stop_pct: 40
+  breakeven_trigger_pct: 30
+  poll_seconds: 30
+
+survival:
+  starting_capital: 100.0
+  consecutive_losses_pause: 2     # → pause for rest of week
+  max_drawdown_pct: 30            # → halt; requires manual resume
+
+backtest:
+  holdout_months: 6
+  years: 2.5
+  iv_rv_ratio: 1.15               # model IV = realized vol × this (synthetic option pricing)
+  min_iv: 0.10
+  rv_window_days: 20
+  model_spread_fraction: 0.06     # modeled bid/ask width as a fraction of mid per leg (min $0.01)
