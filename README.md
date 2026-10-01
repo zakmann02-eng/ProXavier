@@ -55,3 +55,8 @@ A multi-strategy quant trading bot built on Alpaca Markets with Telegram control
 
 All settings via environment variables — see `.Env.example` for the full list.
 Key params: `XAVIER_RISK_PCT`, `XAVIER_MAX_POSITIONS`, `XAVIER_ALLOW_SHORT`, `ALPACA_PAPER`.
+
+---
+
+**New:** `spy-naked-bot/` contains the SPY naked-trading alerts bot (Phase 0 backtest +
+Phase 1 paper alerts). See [spy-naked-bot/README.md](spy-naked-bot/README.md).
