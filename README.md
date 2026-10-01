@@ -1,62 +1,100 @@
-# ProXavier — Xavier Quant Day Trading Bot
+# SPY Naked Trading Bot
 
-A multi-strategy quant trading bot built on Alpaca Markets with Telegram control.
+Analyzes SPY each morning with price-action only (zones + candlestick setups from
+*The Art of Naked Trading*), picks a short-dated SPY debit spread, and sends entry/exit
+alerts to Telegram. **Phase 1 = alerts only**: you place trades manually; the bot keeps a
+paper journal. Year-one goal: prove positive expectancy after costs — not a dollar target.
 
-## Strategies
+No LLM calls at runtime. Plain Python, runs as a Railway cron job that exits when done.
 
-| Strategy | Type | Assets |
-|----------|------|--------|
-| **ORB** — Opening Range Breakout | Day | Equities, ETFs |
-| **VWAP Reversion** — Mean-reversion fade | Day | Equities, ETFs |
-| **Momentum Breakout** — 20-day high/low | Swing | Equities, ETFs |
-| **ETF Sector Rotation** — Relative strength | Swing | ETFs |
-| **Crypto Trend** — Multi-TF trend follow | Day + Swing | BTC, ETH, SOL |
+## Layout
+
+```
+config.yaml              all tunable strategy parameters (hypotheses until backtested)
+data/skip_days.yaml      FOMC / CPI / NFP dates — update manually
+src/main.py              daily flow + CLI (run / status / resume / close-trade)
+src/analysis/            zones, trend bias, setup detection
+src/strategy/            entry checklist, contract selection, shared per-day engine
+src/risk/                exits, survival rules
+src/data/                DataProvider (Alpaca), day-file bar cache, market calendar
+src/alerts/              Telegram client + message formats
+src/journal/             SQLite journal + stats
+backtest/                Phase 0 backtester (same code paths as the live bot)
+tests/                   pytest — setups on hand-built candles, end-to-end simulated days
+```
 
 ## Setup
 
-1. Copy `.Env.example` to `.env` and fill in your credentials:
-   - `ALPACA_API_KEY` / `ALPACA_API_SECRET` — from [alpaca.markets](https://alpaca.markets)
-   - `XAVIER_TELEGRAM_TOKEN` / `XAVIER_TELEGRAM_CHAT_ID` — from [@BotFather](https://t.me/BotFather)
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env     # fill in Telegram + Alpaca keys
+pytest
+```
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Phase 0 — backtest
 
-3. Run in paper mode (default):
-   ```bash
-   python xavier_main.py
-   ```
+```bash
+python -m backtest.run_backtest                          # config.yaml, in-sample only
+python -m backtest.run_backtest --candles 2,3,5 --dte 0,1  # timeframe × expiry grid
+python -m backtest.run_backtest --survival --compound    # with pause/halt rules + compounding
+python -m backtest.run_backtest --holdout                # ONCE, when parameters are final
+```
 
-## Telegram Commands
+* First run downloads ~2.5 years of SPY 1-minute bars (Alpaca SIP, free for data >15 min old)
+  into `data/bars/`; later runs read the cache only.
+* The most recent `holdout_months` (6) are hidden unless `--holdout` is passed, so you can't
+  accidentally tune on them.
+* Reports: win rate, avg win/loss, expectancy ($ and %), max drawdown, trades/month, plus
+  breakdowns by setup, exit reason and direction. Per-trade rows → `data/backtest_trades.csv`.
+* **Option prices are synthetic** (Black-Scholes on realized vol × `iv_rv_ratio`, modeled
+  bid/ask). Free historical SPY option quotes aren't available; results are a first filter.
+  Swap in real options history (Polygon/ThetaData) in `backtest/pricing.py` if you buy it.
+* Fills are conservative: entry at the max limit (mid + 25% of width), exit at mid − 25%,
+  intrabar adverse extreme checked before the close.
 
-| Command | Action |
-|---------|--------|
-| `/status` | Account equity, P&L, market status |
-| `/positions` | Open positions with TP/SL levels |
-| `/risk` | Portfolio risk exposure dashboard |
-| `/strategies` | Active strategy configuration |
-| `/pause` | Halt new trades (keep positions) |
-| `/resume` | Re-enable trading |
-| `/closeall` | Close every open position |
-| `/closeday` | Close day trades only |
-| `/watchlist` | Current equity/ETF/crypto watchlist |
+## Phase 1 — live alerts on Railway
 
-## Risk Management
+1. Deploy this repo on Railway (the existing ProXavier service works — leave Root Directory
+   empty). `railway.json` sets the start command, cron (`55 11,12 * * 1-5` UTC — both
+   DST offsets) and no restarts.
+2. Add a **volume** mounted at `/data`; set `DATA_DIR=/data`, `DB_PATH=/data/journal.sqlite3`.
+3. Set variables from `.env.example` (`MODE=paper`, Telegram, Alpaca). The old Xavier
+   variables `XAVIER_TELEGRAM_TOKEN` / `XAVIER_TELEGRAM_CHAT_ID` and `ALPACA_API_KEY` /
+   `ALPACA_API_SECRET` are read as-is, so the same Telegram bot keeps working. Xavier-only
+   variables (`XAVIER_RISK_PCT`, `ALPACA_PAPER`, …) are ignored and can be deleted.
+4. The script checks the real ET time: it runs only if started within 45 min after 07:55 ET,
+   so the wrong-DST cron slot exits immediately. It also refuses to run twice on one day.
 
-- Fixed % risk per trade (default 1% of equity)
-- Daily loss limit halt (default 3%)
-- Consecutive loss halt (default 4 losses)
-- Portfolio risk cap (default 6% total open risk)
-- TP1: exit 50%, move stop to breakeven, activate trailing stop
-- TP2: exit remaining position
+Daily flow (ET): 07:55 calendar / skip-list / survival checks → 09:20 zones + bias →
+09:25 brief → evaluate the 09:35–09:50 closes → ENTER alert or "No trade today" →
+monitor every 30 s (TP, structural/hard/breakeven stops, 12:00 time stop) → EXIT alert →
+journal + daily summary (+ weekly report on the last trading day of the week).
 
-## Configuration
+Any failure (missing data, API error) → Telegram error alert and no trade.
 
-All settings via environment variables — see `.Env.example` for the full list.
-Key params: `XAVIER_RISK_PCT`, `XAVIER_MAX_POSITIONS`, `XAVIER_ALLOW_SHORT`, `ALPACA_PAPER`.
+### CLI
 
----
+```bash
+python -m src.main run [--force]          # daily job (cron entrypoint)
+python -m src.main status                 # journal stats, halt flag, open trades
+python -m src.main resume                 # clear a drawdown halt after manual review
+python -m src.main close-trade ID PRICE   # close a trade the bot couldn't finish
+```
 
-**New:** `spy-naked-bot/` contains the SPY naked-trading alerts bot (Phase 0 backtest +
-Phase 1 paper alerts). See [spy-naked-bot/README.md](spy-naked-bot/README.md).
+On Railway, run these with `railway run` or a one-off shell against the same volume.
+
+## Safety defaults
+
+* `MODE=paper` only. Any other mode is refused — live execution (Phase 2) isn't built.
+* Secrets come from env vars only.
+* Max 1 trade/day; 2 consecutive losses → paused for the week; −30% from peak → halted
+  until `resume`.
+* Phase 2 must use Robinhood's official Trading MCP server, never unofficial libraries.
+
+## Open questions
+
+* Is the Robinhood account approved for spreads (Level 3)? If not, set
+  `trade.allow_spreads: false` (single long options) and re-run the backtest.
+* Market data budget: Alpaca free tier is wired in. Paid options history would make the
+  backtest's option pricing real instead of modeled.

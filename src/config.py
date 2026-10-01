@@ -210,8 +210,9 @@ class Secrets:
         d = cls()
         return cls(
             mode=os.getenv("MODE", d.mode).strip().lower(),
-            telegram_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+            # XAVIER_* names are accepted so the old Xavier bot's Telegram bot/variables keep working.
+            telegram_token=os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("XAVIER_TELEGRAM_TOKEN", ""),
+            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or os.getenv("XAVIER_TELEGRAM_CHAT_ID", ""),
             alpaca_key=os.getenv("ALPACA_API_KEY", ""),
             alpaca_secret=os.getenv("ALPACA_API_SECRET", ""),
             alpaca_stock_feed=os.getenv("ALPACA_STOCK_FEED", d.alpaca_stock_feed),
